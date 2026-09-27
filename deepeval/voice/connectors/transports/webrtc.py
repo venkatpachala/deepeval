@@ -26,7 +26,6 @@ from deepeval.voice.connectors import audio_utils
 from deepeval.voice.connectors.transports.base import (
     BaseVoiceConnector,
     UplinkStream,
-    iter_downlink,
 )
 from deepeval.voice.connectors.turn_engine import collect_agent_turn
 from deepeval.voice.connectors.types import AgentEvent, ConnectorTurn
@@ -702,7 +701,23 @@ class WebRTCConnector(BaseVoiceConnector):
             raise DeepEvalError(
                 "WebRTCConnector.iter_agent_events() called before connect()."
             )
-        async for event in iter_downlink(self._inbound):
+        pending = None
+        while True:
+            event = pending if pending is not None else await self._inbound.get()
+            pending = None
+            if event.turn_complete:
+                # The audio track can end before a data-channel callback runs.
+                # Deliver transcripts already queued behind the end marker so
+                # callers stopping at turn_complete do not lose them.
+                while True:
+                    try:
+                        following = self._inbound.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    if following.transcript is None or following.turn_complete:
+                        pending = following
+                        break
+                    yield following
             yield event
 
     async def exchange_turn(self, audio: Audio) -> ConnectorTurn:
