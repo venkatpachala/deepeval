@@ -325,6 +325,20 @@ async def test_agent_audio_and_text_arrive_as_events(fake_stack):
     await connector.disconnect()
 
 
+async def test_queued_transcript_precedes_turn_complete():
+    connector = WebRTCConnector(OFFER_URL)
+    connector._inbound = asyncio.Queue()
+    connector._inbound.put_nowait(webrtc.AgentEvent(turn_complete=True))
+    connector._inbound.put_nowait(webrtc.AgentEvent(transcript="late text"))
+    connector._inbound.put_nowait(webrtc.AgentEvent(audio=b"next event"))
+
+    events = connector.iter_agent_events()
+    assert (await events.__anext__()).transcript == "late text"
+    assert (await events.__anext__()).turn_complete
+    assert (await events.__anext__()).audio == b"next event"
+    await events.aclose()
+
+
 async def test_connect_fails_when_no_agent_track_arrives(fake_stack):
     connector = WebRTCConnector(OFFER_URL, connect_timeout_s=0.05)
     FakePeerConnection.connects = False
